@@ -1,0 +1,116 @@
+# Chapter 5
+
+```elixir
+Mix.install([
+  {:nx, "~> 0.6.4"},
+  {:vega_lite, "~> 0.1.8"},
+  {:kino_vega_lite, "~> 0.1.11"}
+])
+
+alias VegaLite, as: Vl
+```
+
+## Data
+
+```elixir
+data =
+  (__DIR__ <> "/data/police.txt")
+  |> Path.expand()
+  |> File.read!()
+  |> String.split()
+  |> Enum.drop(4)
+  |> Enum.map(&String.to_integer/1)
+  |> Enum.chunk_every(4)
+  |> Nx.tensor()
+```
+
+```elixir
+{reservations, police} = {data[[.., 0]], data[[.., -1]]}
+```
+
+```elixir
+plot =
+  Vl.new(width: 600, height: 600)
+  |> Vl.data_from_values(%{
+    "Reservations" => Nx.to_list(reservations),
+    "Police Call" => Nx.to_list(police)
+  })
+  |> Vl.mark(:point)
+  |> Vl.encode_field(:x, "Reservations", type: :quantitative)
+  |> Vl.encode_field(:y, "Police Call", type: :quantitative)
+```
+
+## Sigmoid
+
+```elixir
+defmodule Classifier do
+  import Nx.Defn
+
+  defn sigmoid(z) do
+    1 / (1 + Nx.exp(-z))
+  end
+
+  defn forward(x, w) do
+    Nx.dot(x, w)
+    |> sigmoid()
+  end
+
+  defn classify(x, w) do
+    forward(x, w)
+    |> Nx.round()
+  end
+
+  defn loss(x, y, w) do
+    y_hat = forward(x, w)
+    first_term = y * Nx.log(y_hat)
+    second_term = (1 - y) * Nx.log(1 - y_hat)
+    -Nx.mean(first_term + second_term)
+  end
+
+  defn gradient(x, y, w) do
+    (forward(x, w) - y)
+    |> Nx.dot(x)
+    |> Nx.divide(Nx.axis_size(x, 0))
+  end
+
+  def train(x, y, iterations, lr) do
+    Enum.reduce(1..iterations, Nx.broadcast(0.0, {Nx.axis_size(x, 1)}), fn i, w ->
+      IO.puts("Iteration #{i}, loss #{Nx.to_number(loss(x, y, w))}")
+      Nx.subtract(w, Nx.multiply(gradient(x, y, w), lr))
+    end)
+  end
+
+  def test(x, y, w) do
+    Nx.equal(classify(x, w), y)
+    |> then(&[correct: Nx.sum(&1), total: Nx.size(&1), accuracy: Nx.mean(&1)])
+    |> Enum.map(fn {k, v} -> {k, Nx.to_number(v)} end)
+  end
+end
+```
+
+```elixir
+x = Nx.pad(data[[.., 0..2]], 1, [{0, 0, 0}, {1, 0, 0}])
+y = data[[.., 3]]
+w = Classifier.train(x, y, 10000, 0.001)
+```
+
+```elixir
+Classifier.test(x, y, w)
+```
+
+```elixir
+classifications = Classifier.classify(x, w)
+
+Vl.new()
+|> Vl.layers([
+  plot,
+  Vl.new()
+  |> Vl.data_from_values(%{
+    "Reservations" => Nx.to_list(reservations),
+    "Police Call" => Nx.to_list(classifications)
+  })
+  |> Vl.mark(:tick)
+  |> Vl.encode_field(:x, "Reservations", type: :quantitative)
+  |> Vl.encode_field(:y, "Police Call", type: :quantitative)
+])
+```
