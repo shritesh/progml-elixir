@@ -1,0 +1,108 @@
+# Chapter 2
+
+```elixir
+Mix.install([
+  {:vega_lite, "~> 0.1.8"},
+  {:kino_vega_lite, "~> 0.1.11"},
+  {:nx, "~> 0.6.4"}
+])
+
+alias VegaLite, as: Vl
+```
+
+## Data
+
+```elixir
+[reservations, pizzas] =
+  (__DIR__ <> "/data/pizza.txt")
+  |> Path.expand()
+  |> File.read!()
+  |> String.split()
+  |> Enum.drop(2)
+  |> Enum.map(&String.to_integer/1)
+  |> Enum.chunk_every(2)
+  |> Enum.zip_with(&Nx.tensor/1)
+```
+
+```elixir
+plot =
+  Vl.new(width: 300, height: 300)
+  |> Vl.data_from_values(%{
+    "Reservations" => Nx.to_list(reservations),
+    "Pizzas" => Nx.to_list(pizzas)
+  })
+  |> Vl.mark(:circle)
+  |> Vl.encode_field(:x, "Reservations", type: :quantitative)
+  |> Vl.encode_field(:y, "Pizzas", type: :quantitative)
+```
+
+## Linear Regression
+
+```elixir
+defmodule LinearRegression do
+  import Nx.Defn
+
+  defn predict(x, w, b) do
+    Nx.dot(x, w) + b
+  end
+
+  defn loss(x, y, w, b) do
+    predict(x, w, b)
+    |> Nx.subtract(y)
+    |> Nx.pow(2)
+    |> Nx.mean()
+  end
+
+  def train(x, y, iterations, lr) do
+    Enum.reduce_while(1..iterations, {:training, 0, 0}, fn i, {:training, w, b} ->
+      current_loss = Nx.to_number(loss(x, y, w, b))
+      IO.puts("Iteration #{i}, loss #{current_loss}")
+
+      cond do
+        Nx.to_number(loss(x, y, w + lr, b)) < current_loss -> {:cont, {:training, w + lr, b}}
+        Nx.to_number(loss(x, y, w - lr, b)) < current_loss -> {:cont, {:training, w - lr, b}}
+        Nx.to_number(loss(x, y, w, b + lr)) < current_loss -> {:cont, {:training, w, b + lr}}
+        Nx.to_number(loss(x, y, w, b - lr)) < current_loss -> {:cont, {:training, w, b - lr}}
+        true -> {:halt, {:ok, w, b}}
+      end
+    end)
+  end
+end
+```
+
+```elixir
+{:ok, w, b} = LinearRegression.train(reservations, pizzas, 10000, 0.01)
+```
+
+```elixir
+LinearRegression.predict(20, w, b)
+```
+
+```elixir
+Vl.new()
+|> Vl.layers([
+  plot,
+  Vl.new()
+  |> Vl.data_from_values(%{
+    "Reservations" => [0, 50],
+    "Pizzas" => [b, LinearRegression.predict(50, w, b) |> Nx.to_number()]
+  })
+  |> Vl.mark(:line)
+  |> Vl.encode_field(:x, "Reservations", type: :quantitative)
+  |> Vl.encode_field(:y, "Pizzas", type: :quantitative)
+])
+```
+
+## Tuning hyperparameters
+
+```elixir
+LinearRegression.train(reservations, pizzas, 100_000, 0.001)
+```
+
+```elixir
+LinearRegression.train(reservations, pizzas, 10000, 0.1)
+```
+
+```elixir
+LinearRegression.train(reservations, pizzas, 10000, 1)
+```

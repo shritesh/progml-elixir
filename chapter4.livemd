@@ -1,0 +1,120 @@
+# Chapter 4
+
+```elixir
+Mix.install([
+  {:nx, "~> 0.6.4"}
+])
+```
+
+## Data
+
+```elixir
+data =
+  (__DIR__ <> "/data/pizza_3_vars.txt")
+  |> Path.expand()
+  |> File.read!()
+  |> String.split()
+  |> Enum.drop(4)
+  |> Enum.map(&String.to_integer/1)
+  |> Enum.chunk_every(4)
+  |> Nx.tensor()
+```
+
+## Multiple Variables
+
+```elixir
+defmodule MultiLinearRegression do
+  import Nx.Defn
+
+  defn predict(x, w) do
+    Nx.dot(x, w)
+  end
+
+  defn loss(x, y, w) do
+    (predict(x, w) - y)
+    |> Nx.pow(2)
+    |> Nx.mean()
+  end
+
+  defn gradient(x, y, w) do
+    (predict(x, w) - y)
+    |> Nx.dot(x)
+    |> Nx.divide(Nx.axis_size(x, 0))
+    |> Nx.multiply(2)
+  end
+
+  def train(x, y, iterations, lr) do
+    Enum.reduce(1..iterations, Nx.broadcast(0.0, {Nx.axis_size(x, 1)}), fn i, w ->
+      IO.puts("Iteration #{i}, loss #{Nx.to_number(loss(x, y, w))}")
+      Nx.subtract(w, Nx.multiply(gradient(x, y, w), lr))
+    end)
+  end
+end
+```
+
+<!-- livebook:{"branch_parent_index":1} -->
+
+## Prediction
+
+```elixir
+x = data[[.., 0..2]]
+y = data[[.., 3]]
+```
+
+```elixir
+w = MultiLinearRegression.train(x, y, 10000, 0.001)
+```
+
+```elixir
+MultiLinearRegression.predict(x, w)
+```
+
+<!-- livebook:{"branch_parent_index":1} -->
+
+## Adding a bias
+
+```elixir
+x = Nx.pad(data[[.., 0..2]], 1, [{0, 0, 0}, {1, 0, 0}])
+y = data[[.., 3]]
+w = MultiLinearRegression.train(x, y, 125_000, 0.001)
+```
+
+```elixir
+Nx.to_list(y)
+|> Enum.with_index()
+|> Enum.each(fn {y, i} ->
+  IO.puts("#{i}: y=#{y} prediction=#{Nx.to_number(MultiLinearRegression.predict(x[i], w))}")
+end)
+```
+
+<!-- livebook:{"branch_parent_index":1} -->
+
+## Field statistician
+
+```elixir
+data =
+  (__DIR__ <> "/data/life-expectancy-without-country-names.txt")
+  |> Path.expand()
+  |> File.read!()
+  |> String.split()
+  |> Enum.drop(4)
+  |> Enum.map(&Float.parse/1)
+  |> Enum.map(&elem(&1, 0))
+  |> Enum.chunk_every(4)
+  |> Nx.tensor()
+```
+
+```elixir
+x = Nx.pad(data[[.., 0..2]], 1, [{0, 0, 0}, {1, 0, 0}])
+y = data[[.., 3]]
+
+w = MultiLinearRegression.train(x, y, 1_000_000, 0.0001)
+```
+
+```elixir
+Nx.to_list(y)
+|> Enum.with_index()
+|> Enum.each(fn {y, i} ->
+  IO.puts("#{i}: y=#{y} prediction=#{Nx.to_number(MultiLinearRegression.predict(x[i], w))}")
+end)
+```

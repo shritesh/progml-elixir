@@ -1,0 +1,81 @@
+# Chapter 3
+
+```elixir
+Mix.install([
+  {:nx, "~> 0.6.4"},
+  {:vega_lite, "~> 0.1.8"},
+  {:kino_vega_lite, "~> 0.1.11"}
+])
+```
+
+## Data
+
+```elixir
+[reservations, pizzas] =
+  (__DIR__ <> "/data/pizza.txt")
+  |> Path.expand()
+  |> File.read!()
+  |> String.split()
+  |> Enum.drop(2)
+  |> Enum.map(&String.to_integer/1)
+  |> Enum.chunk_every(2)
+  |> Enum.zip_with(&Nx.tensor/1)
+```
+
+## Gradient Descent
+
+```elixir
+defmodule GradientDescent do
+  import Nx.Defn
+
+  defn predict(x, w, b) do
+    Nx.dot(x, w) + b
+  end
+
+  defn loss(x, y, w, b) do
+    (predict(x, w, b) - y)
+    |> Nx.pow(2)
+    |> Nx.mean()
+  end
+
+  defn gradient(x, y, w, b) do
+    w_gradient =
+      (x * (predict(x, w, b) - y))
+      |> Nx.mean()
+      |> Nx.multiply(2)
+
+    g_gradient =
+      (predict(x, w, b) - y)
+      |> Nx.mean()
+      |> Nx.multiply(2)
+
+    {w_gradient, g_gradient}
+  end
+
+  def train(x, y, iterations, lr) do
+    Enum.reduce(1..iterations, {Nx.tensor(0.0), Nx.tensor(0.0)}, fn i, {w, b} ->
+      IO.puts("Iteration #{i}, loss #{Nx.to_number(loss(x, y, w, b))}")
+      {w_gradient, b_gradient} = gradient(x, y, w, b)
+
+      {
+        Nx.subtract(w, Nx.multiply(w_gradient, lr)),
+        Nx.subtract(b, Nx.multiply(b_gradient, lr))
+      }
+    end)
+  end
+end
+```
+
+```elixir
+{w, b} = GradientDescent.train(reservations, pizzas, 20000, 0.001)
+```
+
+```elixir
+GradientDescent.predict(20, w, b)
+```
+
+## Overshooting
+
+```elixir
+GradientDescent.train(reservations, pizzas, 50, 0.01)
+```
