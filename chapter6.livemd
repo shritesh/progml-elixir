@@ -1,0 +1,116 @@
+# Chapter 6
+
+```elixir
+Mix.install(
+  [
+    {:nx, "~> 0.6.4"},
+    {:exla, "~> 0.6.4"}
+  ],
+  config: [nx: [default_backend: EXLA.Backend]]
+)
+```
+
+## MNIST
+
+```elixir
+defmodule MNIST do
+  def load_images(:train), do: load_images(__DIR__ <> "/data/mnist/train-images-idx3-ubyte.gz")
+  def load_images(:test), do: load_images(__DIR__ <> "/data/mnist/t10k-images-idx3-ubyte.gz")
+
+  def load_images(filename) when is_binary(filename) do
+    <<2051::32, count::32, rows::32, cols::32, pixels::binary>> =
+      File.read!(filename)
+      |> :zlib.gunzip()
+
+    Nx.from_binary(pixels, :u8)
+    |> Nx.reshape({count, rows * cols})
+  end
+
+  def load_labels(:train), do: load_labels(__DIR__ <> "/data/mnist/train-labels-idx1-ubyte.gz")
+  def load_labels(:test), do: load_labels(__DIR__ <> "/data/mnist/t10k-labels-idx1-ubyte.gz")
+
+  def load_labels(filename) when is_binary(filename) do
+    <<2049::32, count::32, labels::binary>> =
+      File.read!(filename)
+      |> :zlib.gunzip()
+
+    Nx.from_binary(labels, :u8)
+    |> Nx.reshape({count})
+  end
+end
+```
+
+```elixir
+# leftpad for bias
+x_train = MNIST.load_images(:train) |> Nx.pad(1, [{0, 0, 0}, {1, 0, 0}])
+x_test = MNIST.load_images(:test) |> Nx.pad(1, [{0, 0, 0}, {1, 0, 0}])
+
+# 5 or not
+y_train = MNIST.load_labels(:train) |> Nx.equal(5)
+y_test = MNIST.load_labels(:test) |> Nx.equal(5)
+```
+
+```elixir
+defmodule Classifier do
+  import Nx.Defn
+
+  defn forward(x, w) do
+    Nx.dot(x, w)
+    |> Nx.sigmoid()
+  end
+
+  defn classify(x, w) do
+    forward(x, w)
+    |> Nx.round()
+  end
+
+  defn loss(x, y, w) do
+    y_hat = forward(x, w)
+    first_term = y * Nx.log(y_hat)
+    second_term = (1 - y) * Nx.log(1 - y_hat)
+    -Nx.mean(first_term + second_term)
+  end
+
+  defn gradient(x, y, w) do
+    (forward(x, w) - y)
+    |> Nx.dot(x)
+    |> Nx.divide(Nx.axis_size(x, 0))
+  end
+
+  def train(x, y, iterations, lr) do
+    Enum.reduce(1..iterations, Nx.broadcast(0.0, {Nx.axis_size(x, 1)}), fn i, w ->
+      IO.puts("Iteration #{i}, loss #{Nx.to_number(loss(x, y, w))}")
+      Nx.subtract(w, Nx.multiply(gradient(x, y, w), lr))
+    end)
+  end
+
+  def test(x, y, w) do
+    Nx.equal(classify(x, w), y)
+    |> then(&[correct: Nx.sum(&1), total: Nx.size(&1), accuracy: Nx.mean(&1)])
+    |> Enum.map(fn {k, v} -> {k, Nx.to_number(v)} end)
+  end
+end
+```
+
+```elixir
+w = Classifier.train(x_train, y_train, 100, 1.0e-5)
+```
+
+```elixir
+Classifier.test(x_test, y_test, w)
+```
+
+<!-- livebook:{"branch_parent_index":0} -->
+
+## All the digits
+
+```elixir
+Enum.map(0..9, fn i ->
+  y_train = MNIST.load_labels(:train) |> Nx.equal(i)
+  y_test = MNIST.load_labels(:test) |> Nx.equal(i)
+
+  w = Classifier.train(x_train, y_train, 100, 1.0e-5)
+
+  {i, Classifier.test(x_test, y_test, w)}
+end)
+```
