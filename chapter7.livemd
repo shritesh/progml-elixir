@@ -1,0 +1,141 @@
+# Chapter 7
+
+```elixir
+Mix.install(
+  [
+    {:nx, "~> 0.6.4"},
+    {:exla, "~> 0.6.4"}
+  ],
+  config: [nx: [default_backend: EXLA.Backend]]
+)
+```
+
+## Multi classification
+
+```elixir
+defmodule OHE do
+  import Nx.Defn
+
+  defn one_hot_encode(y, opts \\ [classes: 10]) do
+    Nx.new_axis(y, -1)
+    |> Nx.equal(Nx.iota({opts[:classes]}))
+  end
+end
+```
+
+```elixir
+defmodule Classifier do
+  import Nx.Defn
+
+  defn forward(x, w) do
+    Nx.dot(x, w)
+    |> Nx.sigmoid()
+  end
+
+  defn classify(x, w) do
+    forward(x, w)
+    |> Nx.argmax(axis: 1)
+  end
+
+  defn loss(x, y, w) do
+    y_hat = forward(x, w)
+    first_term = y * Nx.log(y_hat)
+    second_term = (1 - y) * Nx.log(1 - y_hat)
+    -Nx.sum(first_term + second_term) / Nx.axis_size(x, 0)
+  end
+
+  defn gradient(x, y, w) do
+    Nx.transpose(x)
+    |> Nx.dot(forward(x, w) - y)
+    |> Nx.divide(Nx.axis_size(x, 0))
+  end
+
+  def train(x_train, y_train, x_test, y_test, iterations, lr) do
+    Enum.reduce(
+      1..iterations,
+      Nx.broadcast(0.0, {Nx.axis_size(x_train, 1), Nx.axis_size(y_train, 1)}),
+      fn i, w ->
+        report(i, x_train, y_train, x_test, y_test, w)
+        Nx.subtract(w, Nx.multiply(gradient(x_train, y_train, w), lr))
+      end
+    )
+  end
+
+  def report(i, x_train, y_train, x_test, y_test, w) do
+    training_loss = loss(x_train, y_train, w)
+    accuracy = Nx.equal(classify(x_test, w), y_test) |> Nx.mean()
+
+    IO.puts("#{i} - Loss #{Nx.to_number(training_loss)}, Accuracy #{Nx.to_number(accuracy)}")
+  end
+end
+```
+
+<!-- livebook:{"branch_parent_index":0} -->
+
+## MNIST
+
+```elixir
+defmodule MNIST do
+  def load_images(:train), do: load_images(__DIR__ <> "/data/mnist/train-images-idx3-ubyte.gz")
+  def load_images(:test), do: load_images(__DIR__ <> "/data/mnist/t10k-images-idx3-ubyte.gz")
+
+  def load_images(filename) when is_binary(filename) do
+    <<2051::32, count::32, rows::32, cols::32, pixels::binary>> =
+      File.read!(filename)
+      |> :zlib.gunzip()
+
+    Nx.from_binary(pixels, :u8)
+    |> Nx.reshape({count, rows * cols})
+  end
+
+  def load_labels(:train), do: load_labels(__DIR__ <> "/data/mnist/train-labels-idx1-ubyte.gz")
+  def load_labels(:test), do: load_labels(__DIR__ <> "/data/mnist/t10k-labels-idx1-ubyte.gz")
+
+  def load_labels(filename) when is_binary(filename) do
+    <<2049::32, count::32, labels::binary>> =
+      File.read!(filename)
+      |> :zlib.gunzip()
+
+    Nx.from_binary(labels, :u8)
+    |> Nx.reshape({count})
+  end
+end
+```
+
+```elixir
+x_train = MNIST.load_images(:train) |> Nx.pad(1, [{0, 0, 0}, {1, 0, 0}])
+x_test = MNIST.load_images(:test) |> Nx.pad(1, [{0, 0, 0}, {1, 0, 0}])
+
+y_train = MNIST.load_labels(:train) |> OHE.one_hot_encode()
+y_test = MNIST.load_labels(:test)
+```
+
+```elixir
+w = Classifier.train(x_train, y_train, x_test, y_test, 200, 1.0e-5)
+```
+
+<!-- livebook:{"branch_parent_index":0} -->
+
+## Mines vs. Rocks
+
+```elixir
+{x, y} =
+  File.stream!(__DIR__ <> "/data/sonar.all-data")
+  |> Stream.map(&Enum.split(String.split(&1, ","), -1))
+  |> Stream.map(fn {numbers, [label]} ->
+    {Enum.map(numbers, &String.to_float/1), (label == "R\n" && 1) || 0}
+  end)
+  |> Enum.shuffle()
+  |> Enum.unzip()
+  |> then(fn {inputs, labels} -> {Nx.tensor(inputs), Nx.tensor(labels)} end)
+
+x_train = x[[0..-47//1]] |> Nx.pad(1, [{0, 0, 0}, {1, 0, 0}])
+x_test = x[[-48..-1]] |> Nx.pad(1, [{0, 0, 0}, {1, 0, 0}])
+
+y_train = y[[0..-47//1]] |> OHE.one_hot_encode(classes: 2)
+y_test = y[[-48..-1]]
+```
+
+```elixir
+w = Classifier.train(x_train, y_train, x_test, y_test, 10000, 0.01)
+```
